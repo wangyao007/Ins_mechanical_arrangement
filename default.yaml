@@ -1,0 +1,27 @@
+%YAML:1.0
+
+#directory of file
+dataset_dir: "/home/pl/桌面/组合导航/imu.txt"
+output_dir: "/home/pl/桌面/组合导航/output.txt"
+
+# gravity parameter
+a1: 9.7803267715
+a2: 0.0052790414
+a3: 0.0000232718
+a4: 0.000003087691089
+a5: 0.000000004397731
+a6: 0.00000000000721
+
+#地球第一离心率
+e: 0.016710219
+
+# 地球长半轴
+a: 6378160
+
+#location
+longitude: 114
+latitude: 39
+height: 50
+
+#earth rotation palstance
+we: 0.00007292
