@@ -1,0 +1,170 @@
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+#include<stdlib.h>
+#include<Eigen/Core>
+#include<Eigen/Dense>
+#include"config.h"
+#include"imuInitialization.h"
+#include"rotation.h"
+#include<cmath>
+
+using namespace std;
+
+int main(int argc, char** argv)
+{
+   clock_t time_stt=clock();
+   if(argc!=2)
+     {
+       cout<<"usage: parameter_file"<<endl;
+       return 1;
+     }
+    Config::setParameterFile ( argv[1] ); //调用设置参数的函数
+    //调用参数文件中的参数
+    string dataset_dir = Config::get<string> ( "dataset_dir" );//返回Config->file_[dataset_dir]，也就是返回数据的绝对路径
+    double w_ie= Config::get<double> ( "we" );
+    double location[3]={Config::get<double> ( "longitude" ),Config::get<double> ( "latitude" ),Config::get<double> ( "height" )};
+    //double g_parameter[6]={Config::get<double> ( "a1" ),Config::get<double> ( "a2" ),Config::get<double> ( "a3" ),Config::get<double> ( "a4" ),Config::get<double> ( "a5" ),Config::get<double> ( "a6" )};
+    //读取观测数据
+    ifstream fin(dataset_dir);
+    if ( !fin )
+    {
+        cout<<"please generate the associate file called associate.txt!"<<endl;
+        return 1;
+    }
+   vector<double>acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z;
+   while(!fin.eof()) //读到末尾前
+      {
+         string time,gyro_xs,gyro_ys,gyro_zs,acc_xs,acc_ys,acc_zs;         
+         fin>>time>>gyro_xs>>gyro_ys>>gyro_zs>>acc_xs>>acc_ys>>acc_zs;
+         gyro_x.push_back(atof(gyro_xs.c_str())); //c_str()是返回一个内容同sting类相同的C风格字符串
+         gyro_y.push_back(atof(+gyro_ys.c_str()));
+         gyro_z.push_back(atof(gyro_zs.c_str()));
+         acc_x.push_back(atof(acc_xs.c_str()));
+	 acc_y.push_back(atof(acc_ys.c_str()));
+	 acc_z.push_back(atof(acc_zs.c_str()));
+         if(fin.good()==false) break;//读到末尾强制退出
+       }
+      
+   //求平均值
+	  double sum_gyro_x=0;
+	  double sum_gyro_y=0;
+	  double sum_gyro_z=0;
+	  double sum_acc_x=0;
+	  double sum_acc_y=0;	
+	  double sum_acc_z=0;
+
+      for(int i=0;i<acc_x.size();i++)
+        {  
+	  sum_gyro_x+=gyro_x[i];
+	  sum_gyro_y+=gyro_y[i];
+	  sum_gyro_z+=gyro_z[i];
+          sum_acc_x+=acc_x[i];
+	  sum_acc_y+=acc_y[i];
+	  sum_acc_z+=acc_z[i];
+       
+        }
+	sum_gyro_x=sum_gyro_x/gyro_x.size()*200;
+	sum_gyro_y=sum_gyro_y/gyro_y.size()*200;
+	sum_gyro_z=sum_gyro_z/gyro_z.size()*200;
+        sum_acc_x=-sum_acc_x/acc_x.size()*200;
+	sum_acc_y=-sum_acc_y/acc_y.size()*200;
+	sum_acc_z=-sum_acc_z/acc_z.size()*200;
+     
+	double acc_xyz[3]={sum_acc_x,sum_acc_y,sum_acc_z};
+	double gyro[3]={sum_gyro_x,sum_gyro_y,sum_gyro_z};
+// 求惯导初始旋转矩阵
+	Eigen::Matrix3d C_b_n=imuInitialization::getImuInitialization(w_ie,acc_xyz, gyro,location);
+	cout<<C_b_n<<endl;
+	double pich=-(atan(C_b_n(2,0)/sqrt(1-C_b_n(2,0)*C_b_n(2,0))))*180/M_PI;
+	double roll=(atan2(C_b_n(2,1),C_b_n(2,2)))*180/M_PI;
+	double yaw=(atan2(C_b_n(1,0),C_b_n(0,0)))*180/M_PI;
+	cout<<"pich= "<<pich<<endl<<"roll= "<<roll<<endl<<"yaw= "<<yaw<<endl;
+	cout<<"time use in QR compositiong is "<<1000*(clock()-time_stt)/(double) CLOCKS_PER_SEC<<"ms"<<endl;
+	
+	Eigen::Vector3d euler_angles = C_b_n.eulerAngles(2,1,0);
+	cout<<"yaw pitch roll = "<<euler_angles.transpose()*180/M_PI<<endl<<endl;	
+
+//初始化参数
+   //配置基本地球参数	
+   Eth eth;
+   eth.we=Config::get<double> ("we");
+   eth.a=Config::get<double> ("a"); 
+   eth.e=Config::get<double> ("e");
+   eth.e2=Config::get<double> ("e2");
+   eth.w_ie_e<<0,0,eth.we;
+   
+   Ins ins;
+   ins.eth=eth;
+   ins.pos<<location[0],location[1],location[2];
+   ins.C_b_n=C_b_n;
+   ins.q_b_n=Eigen::Quaterniond(C_b_n);//////初始旋转四元数
+   ins.dv_f_k_n<<0,0,0;  //比力速度增量
+   ins.dv_g_k_n<<0,0,0;  //有害速度增量
+   ins.v_n<<0,0,0; //初始速度
+   double lamd=ins.pos(0);double fi=ins.pos(1); //上一时刻的经度纬度
+   
+   Eigen::Quaterniond q_n_e(cos(-M_PI/4-fi/2)*cos(lamd/2),-sin(-M_PI/4-fi/2)*sin(lamd/2),sin(-M_PI/4-fi/2)*cos(lamd/2),cos(-M_PI/4-fi/2)*sin(lamd/2));  //2.79 
+   ins.q_n_e=q_n_e;
+   //读取数据
+   string dataset_dir_data = Config::get<string> ( "dataset_dir_data" ); //imu.txt文件路径
+   cout<<dataset_dir_data<<endl;
+   ifstream fin1(dataset_dir_data);
+    if ( !fin1 )
+    {
+        cout<<"please generate the associate file called associate.txt!"<<endl;
+        return 1;
+    }
+   vector< vector<double> >imu;
+   while(!fin1.eof()) //读到末尾前
+      {
+         string time,gyro_xs,gyro_ys,gyro_zs,acc_xs,acc_ys,acc_zs;
+         vector<double>data_k;        
+         fin>>time>>gyro_xs>>gyro_ys>>gyro_zs>>acc_xs>>acc_ys>>acc_zs;
+         data_k.push_back(atof(time.c_str()));
+         data_k.push_back(atof(gyro_xs.c_str()));
+         data_k.push_back(atof(gyro_ys.c_str()));
+         data_k.push_back(atof(gyro_zs.c_str()));
+         data_k.push_back(atof(acc_xs.c_str()));
+	 data_k.push_back(atof(acc_ys.c_str()));
+	 data_k.push_back(atof(acc_zs.c_str()));
+         imu.push_back(data_k);
+         if(fin1.good()==false) break;//读到末尾强制退出
+       }
+   /*
+   //开始计算
+  vector< vector<Eigen::Vector3d> >output;
+  for(int i=0;i<sizeof(imu)-1;i++)
+   {
+    ins.dt=imu[i+1][0]-imu[i][0];
+    ins.wb_k<<imu[i+1][1],imu[i+1][2],imu[i+1][3];  //当前时刻的角度增量观测值
+    ins.wb_k1<<imu[i][1],imu[i][2],imu[i][3]; //上一时刻的角度增量观测值
+    ins.fb_k<<imu[i+1][4],imu[i+1][5],imu[i+1][6]; //当前时刻的速度增量观测值
+    ins.fb_k1<<imu[i][4],imu[i][5],imu[i][6]; //上一时刻的速度增量观测值
+    
+    //Ins& ins1=ins;
+    //角速度更新
+    ins=imuInitialization::extrapolation(ins);
+    //速度更新
+    ins=imuInitialization::getVelocity(ins);
+    //位置更新
+    ins=imuInitialization::getLocation(ins);
+    //姿态更新
+    ins=imuInitialization::getPosture(ins);
+    //Plastance plastance=imuInitialization::getPlastance(ins.eth,ins.pos,ins.v_n);
+    //保存结果
+    Eigen::Vector3d angle;
+    angle<<(double)-(atan(ins.C_b_n(2,0)/sqrt(1-ins.C_b_n(2,0)*ins.C_b_n(2,0))))*180/M_PI,
+	   (double)(atan2(ins.C_b_n(2,1),ins.C_b_n(2,2)))*180/M_PI;
+	   (double)(atan2(ins.C_b_n(1,0),ins.C_b_n(0,0)))*180/M_PI;
+
+    vector<Eigen::Vector3d> result;
+    result.push_back(ins.v_n);
+    result.push_back(ins.pos);
+    result.push_back(angle);
+    output.push_back(result);
+   };
+  */ 
+return 0;
+}

@@ -1,0 +1,8 @@
+add_library( mystim SHARED
+     imuInitialization.cpp 
+     config.cpp
+     rotation.cpp
+)
+target_link_libraries( mystim
+    ${THIRD_PARTY_LIBS}
+)
