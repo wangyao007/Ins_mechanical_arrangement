@@ -5,3 +5,4 @@ mkdir bin build lib
 cd build
 cmake ..
 make
+运行：./程序 配置文件路径
